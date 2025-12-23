@@ -1,0 +1,392 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { RotateCcw } from 'lucide-react';
+
+// --- 定数と型定義 ---
+const BOARD_SIZE = 11;
+const PLAYER_BLACK = 'black';
+const PLAYER_WHITE = 'white';
+type Player = typeof PLAYER_BLACK | typeof PLAYER_WHITE;
+
+// ゲーム設定：Mod4ルールに変更
+const MOD_NUM = 4; // 4の倍数で勝ち
+const WIN_COUNT = 4; // 4つ並べる
+
+interface Stone {
+  player: Player;
+  value: number;
+}
+
+interface Cell {
+  row: number;
+  col: number;
+}
+
+// 数字（1-4）をランダムに生成するヘルパー関数
+const generateValue = () => Math.floor(Math.random() * MOD_NUM) + 1;
+
+// 初期の手配（キュー）を生成。十分な長さを確保
+const generateQueue = (length: number = 100) => Array.from({ length }, generateValue);
+
+// 11路盤の星の位置 (0-indexed)
+const STAR_POINTS = [
+  { r: 2, c: 2 }, { r: 2, c: 8 },
+  { r: 8, c: 2 }, { r: 8, c: 8 },
+  { r: 5, c: 5 }
+];
+
+export default function Mod4Game() {
+  // --- ステート管理 ---
+  const [board, setBoard] = useState<(Stone | null)[][]>([]);
+  const [turn, setTurn] = useState<Player>(PLAYER_BLACK);
+  const [winner, setWinner] = useState<Player | null>(null);
+  const [winningLine, setWinningLine] = useState<Cell[]>([]);
+  
+  // 各プレイヤーの手持ち数字キュー
+  const [blackQueue, setBlackQueue] = useState<number[]>([]);
+  const [whiteQueue, setWhiteQueue] = useState<number[]>([]);
+
+  // ゲームの初期化・リセット
+  const initializeGame = useCallback(() => {
+    // 11x11の空の盤面を作成
+    const newBoard = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+    setBoard(newBoard);
+    setTurn(PLAYER_BLACK);
+    setWinner(null);
+    setWinningLine([]);
+    setBlackQueue(generateQueue());
+    setWhiteQueue(generateQueue());
+  }, []);
+
+  // 初回ロード時に初期化
+  useEffect(() => {
+    initializeGame();
+  }, [initializeGame]);
+
+  // --- 勝利判定ロジック (Mod4版) ---
+  const checkWin = (r: number, c: number, currentBoard: (Stone | null)[][], player: Player) => {
+    // チェックする方向: 横, 縦, 斜め(右下), 斜め(左下)
+    const directions = [
+      [0, 1],   // 横
+      [1, 0],   // 縦
+      [1, 1],   // 斜め (左上から右下)
+      [1, -1]   // 斜め (右上から左下)
+    ];
+
+    for (const [dr, dc] of directions) {
+      // 該当の石を含むWIN_COUNT(4)連続のパターンを探索
+      // k はオフセット。0から -(WIN_COUNT-1) までずらしてチェック
+      for (let k = 0; k > -WIN_COUNT; k--) {
+        const cells: { r: number, c: number, val: number }[] = [];
+        let sum = 0;
+        let valid = true;
+
+        for (let i = 0; i < WIN_COUNT; i++) {
+          const nr = r + (k + i) * dr;
+          const nc = c + (k + i) * dc;
+
+          // 盤面外チェック
+          if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) {
+            valid = false;
+            break;
+          }
+
+          const stone = currentBoard[nr][nc];
+          
+          // 石がない、または「石の色が置いたプレイヤーと異なる」場合は無効
+          if (!stone || stone.player !== player) {
+            valid = false;
+            break;
+          }
+
+          cells.push({ r: nr, c: nc, val: stone.value });
+          sum += stone.value;
+        }
+
+        // 全て自分の石で、かつ合計がMOD_NUM(4)の倍数なら勝利
+        if (valid && sum % MOD_NUM === 0) {
+          setWinner(player);
+          setWinningLine(cells.map(c => ({ row: c.r, col: c.c })));
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // --- 石を置く処理 ---
+  const handleCellClick = (row: number, col: number) => {
+    if (winner || board[row][col]) return;
+
+    const currentQueue = turn === PLAYER_BLACK ? blackQueue : whiteQueue;
+    const valueToPlace = currentQueue[0];
+
+    const newBoard = [...board];
+    newBoard[row] = [...newBoard[row]];
+    newBoard[row][col] = { player: turn, value: valueToPlace };
+    setBoard(newBoard);
+
+    const isWin = checkWin(row, col, newBoard, turn);
+
+    if (!isWin) {
+      const nextQueue = currentQueue.slice(1);
+      nextQueue.push(generateValue());
+
+      if (turn === PLAYER_BLACK) {
+        setBlackQueue(nextQueue);
+        setTurn(PLAYER_WHITE);
+      } else {
+        setWhiteQueue(nextQueue);
+        setTurn(PLAYER_BLACK);
+      }
+    }
+  };
+
+  // --- UIコンポーネントヘルパー ---
+
+  // 石のスタイル生成（立体感）
+  const getStoneStyle = (player: Player, isWinning: boolean) => {
+    const baseStyle: React.CSSProperties = {
+      boxShadow: '2px 3px 4px rgba(0, 0, 0, 0.4), inset -2px -2px 6px rgba(0,0,0,0.2)',
+    };
+    
+    if (player === PLAYER_BLACK) {
+      return {
+        ...baseStyle,
+        background: 'radial-gradient(circle at 35% 35%, #666, #000)',
+        color: '#fff',
+        border: 'none',
+        textShadow: '0px 1px 2px rgba(0,0,0,0.8)'
+      };
+    } else {
+      return {
+        ...baseStyle,
+        background: 'radial-gradient(circle at 35% 35%, #fff, #d4d4d4)',
+        color: '#000',
+        border: '1px solid #aaa', // 白石の輪郭をわずかに強調
+      };
+    }
+  };
+
+  // キュー表示コンポーネント
+  const PlayerStatus = ({ player, queue, isCurrent }: { player: Player, queue: number[], isCurrent: boolean }) => {
+    const isBlack = player === PLAYER_BLACK;
+    
+    return (
+      <div className={`flex flex-col items-center p-6 rounded-xl transition-all duration-500 relative ${isCurrent ? 'bg-white/60 shadow-xl scale-105 border-yellow-600/30 border' : 'opacity-60 grayscale'}`}>
+        <div className={`font-serif font-bold mb-4 text-xl tracking-widest border-b-2 pb-1 ${isCurrent ? 'border-yellow-600 text-stone-900' : 'border-transparent text-stone-500'}`}>
+          {isBlack ? '先手【黒】' : '後手【白】'}
+        </div>
+        
+        <div className="flex items-end gap-4">
+          {/* 現在の手 */}
+          <div className="flex flex-col items-center">
+            <span className="text-xs font-serif font-bold mb-2 text-stone-600 tracking-wider">次の一手</span>
+            <div 
+              className="w-14 h-14 rounded-full flex items-center justify-center text-2xl font-serif font-bold transition-all duration-300"
+              style={getStoneStyle(player, false)}
+            >
+              {queue[0]}
+            </div>
+          </div>
+
+          {/* 次の手 */}
+          <div className="flex flex-col items-center opacity-80">
+            <span className="text-xs mb-1 font-serif text-stone-500">その次</span>
+            <div 
+              className="w-10 h-10 rounded-full flex items-center justify-center text-base font-serif font-bold"
+              style={getStoneStyle(player, false)}
+            >
+              {queue[1]}
+            </div>
+          </div>
+
+           {/* 次の次の手 */}
+           <div className="flex flex-col items-center opacity-60">
+            <div 
+              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-serif font-bold"
+              style={getStoneStyle(player, false)}
+            >
+              {queue[2]}
+            </div>
+          </div>
+        </div>
+
+        {/* 手番インジケーター */}
+        {isCurrent && !winner && (
+          <div className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full animate-ping" />
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f3f0e6] flex flex-col items-center py-8 font-sans selection:bg-stone-300 text-stone-800">
+      <header className="mb-8 text-center">
+        <h1 className="text-4xl font-serif font-bold text-stone-900 mb-3 tracking-widest" style={{ textShadow: '1px 1px 0px rgba(0,0,0,0.1)' }}>
+          mod4目並べ
+        </h1>
+        <p className="text-stone-700 text-sm font-serif tracking-wide">
+          <span className="font-bold text-red-700 border-b border-red-700 pb-0.5 mx-1">同色の石4つ</span>
+          の合計が
+          <span className="font-bold mx-1">4の倍数</span>
+          で勝利
+        </p>
+        <p className="text-stone-500 text-xs font-serif mt-1">
+          (使用する石：1, 2, 3, 4)
+        </p>
+      </header>
+
+      <div className="flex flex-col lg:flex-row gap-12 items-center justify-center w-full max-w-6xl px-4">
+        
+        {/* 左サイド: 黒プレイヤー情報 */}
+        <div className="order-2 lg:order-1 flex-1 flex justify-end w-full lg:w-auto">
+          <PlayerStatus player={PLAYER_BLACK} queue={blackQueue} isCurrent={turn === PLAYER_BLACK && !winner} />
+        </div>
+
+        {/* 中央: 盤面 */}
+        <div className="order-1 lg:order-2 relative select-none p-1 rounded shadow-2xl bg-[#5d3a1a]">
+          {/* 盤の木目部分 */}
+          <div className="bg-[#DCB35C] p-6 relative rounded-sm" 
+               style={{ 
+                 boxShadow: 'inset 0 0 40px rgba(0,0,0,0.1)',
+                 backgroundImage: 'linear-gradient(45deg, rgba(255,255,255,0.05) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.05) 75%, transparent 75%, transparent)',
+                 backgroundSize: '40px 40px'
+               }}>
+            
+            {/* 盤面のコンテナ */}
+            <div className="relative" style={{ width: 'min(80vw, 440px)', height: 'min(80vw, 440px)' }}>
+              
+              {/* グリッド線 */}
+              <div className="absolute inset-0 pointer-events-none">
+                 {/* 横線 */}
+                {Array.from({ length: BOARD_SIZE }).map((_, i) => (
+                  <div 
+                    key={`h-${i}`} 
+                    className="absolute bg-stone-900 w-full h-[1px] transform -translate-y-1/2"
+                    style={{ top: `${(i / (BOARD_SIZE - 1)) * 100}%` }} 
+                  />
+                ))}
+                {/* 縦線 */}
+                {Array.from({ length: BOARD_SIZE }).map((_, i) => (
+                  <div 
+                    key={`v-${i}`} 
+                    className="absolute bg-stone-900 h-full w-[1px] transform -translate-x-1/2"
+                    style={{ left: `${(i / (BOARD_SIZE - 1)) * 100}%` }} 
+                  />
+                ))}
+              </div>
+
+              {/* 星 (Star Points) */}
+              {STAR_POINTS.map((point, idx) => (
+                <div 
+                  key={`star-${idx}`}
+                  className="absolute w-2 h-2 bg-stone-900 rounded-full transform -translate-x-1/2 -translate-y-1/2 shadow-sm"
+                  style={{ 
+                    top: `${(point.r / (BOARD_SIZE - 1)) * 100}%`,
+                    left: `${(point.c / (BOARD_SIZE - 1)) * 100}%`
+                  }}
+                />
+              ))}
+
+              {/* インタラクションレイヤー (石を置く場所) */}
+              {/* 絶対配置で各交点にヒットボックスと石を配置する */}
+              <div className="absolute inset-0 z-10">
+                {board.map((row, r) => (
+                  row.map((stone, c) => {
+                    const isWinningStone = winningLine.some(cell => cell.row === r && cell.col === c);
+                    // 交点の位置を計算 (0% ~ 100%)
+                    const left = `${(c / (BOARD_SIZE - 1)) * 100}%`;
+                    const top = `${(r / (BOARD_SIZE - 1)) * 100}%`;
+
+                    return (
+                      <div 
+                        key={`${r}-${c}`}
+                        onClick={() => handleCellClick(r, c)}
+                        className="absolute flex items-center justify-center cursor-pointer"
+                        style={{
+                          left: left,
+                          top: top,
+                          width: '9.5%', // グリッド間隔に合わせて調整（クリックしやすく）
+                          height: '9.5%',
+                          transform: 'translate(-50%, -50%)', // 中心を交点に合わせる
+                        }}
+                      >
+                        {/* 透明なヒットエリア (丸くする) */}
+                        <div className="absolute inset-0 rounded-full hover:bg-black/5 transition-colors duration-200" />
+
+                        {/* 石の描画 */}
+                        {stone && (
+                          <div 
+                            className={`
+                              w-[90%] h-[90%] rounded-full flex items-center justify-center text-sm md:text-lg font-serif font-bold
+                              transition-all duration-300 animate-in zoom-in-50
+                              ${isWinningStone ? 'ring-4 ring-red-500/70 z-20 scale-105' : ''}
+                            `}
+                            style={getStoneStyle(stone.player, isWinningStone)}
+                          >
+                            {stone.value}
+                          </div>
+                        )}
+                        
+                        {/* ホバー時のファントムストーン (空のマスのみ) */}
+                        {!stone && !winner && turn && (
+                          <div 
+                            className="absolute w-[85%] h-[85%] rounded-full opacity-0 hover:opacity-40 transition-opacity pointer-events-none"
+                            style={{
+                                background: turn === PLAYER_BLACK ? '#000' : '#fff',
+                                transform: 'scale(0.8)'
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 右サイド: 白プレイヤー情報 */}
+        <div className="order-3 lg:order-3 flex-1 flex justify-start w-full lg:w-auto">
+          <PlayerStatus player={PLAYER_WHITE} queue={whiteQueue} isCurrent={turn === PLAYER_WHITE && !winner} />
+        </div>
+      </div>
+
+      {/* コントロール */}
+      <div className="mt-12">
+        <button 
+          onClick={initializeGame}
+          className="flex items-center gap-2 px-8 py-3 bg-stone-800 hover:bg-stone-700 text-[#eaddcf] rounded shadow-lg transition-colors font-serif tracking-wider"
+        >
+          <RotateCcw size={18} />
+          盤面を改める
+        </button>
+      </div>
+
+      {/* 勝利モーダル */}
+      {winner && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-in fade-in duration-500 backdrop-blur-sm">
+          <div className="bg-[#fcfaf5] p-10 rounded-sm shadow-2xl text-center max-w-sm mx-4 border border-stone-300 relative">
+             <div className="absolute -top-3 -left-3 w-6 h-6 border-t-2 border-l-2 border-stone-400"/>
+             <div className="absolute -bottom-3 -right-3 w-6 h-6 border-b-2 border-r-2 border-stone-400"/>
+             
+            <h2 className="text-xl font-serif text-stone-500 mb-4 tracking-widest">勝負あり</h2>
+            <div className="text-5xl mb-8 font-serif font-bold text-stone-900 border-b-2 border-stone-200 pb-6">
+              {winner === PLAYER_BLACK ? '黒' : '白'}の勝ち
+            </div>
+            <p className="text-stone-600 mb-8 font-serif text-sm">
+              見事な打ち回しでした。
+            </p>
+            <button 
+              onClick={initializeGame}
+              className="w-full py-3 bg-stone-800 hover:bg-stone-700 text-[#eaddcf] font-serif tracking-widest transition-colors shadow-md"
+            >
+              もう一局
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
